@@ -29,7 +29,7 @@ int main(void) {
 
   // Variables
   int res = EXIT_FAILURE;
-  const struct sockaddr local_addr = get_network_interfaces();
+  const struct sockaddr src_addr = get_network_interfaces();
   
   // End
   res = EXIT_SUCCESS;
@@ -42,12 +42,12 @@ int main(void) {
 void print_network_interface(struct ifaddrs *interface) {
   // Variables
   int status = 0;
-  char host[NI_MAXHOST];
+  char address[NI_MAXHOST], netmask[NI_MAXHOST];
 
   // address-to-name translation
   status = getnameinfo(interface->ifa_addr,
 		       sizeof(struct sockaddr_in),
-		       host,
+		       address,
 		       NI_MAXHOST,
 		       NULL,
 		       0,
@@ -56,13 +56,29 @@ void print_network_interface(struct ifaddrs *interface) {
 
   // checks if getnameinfo worked
   if (status != 0) {
-    perror("Error: getnameinfo(...).\n");
+    perror("Error: getnameinfo(ifa_addr, ...).\n");
+    exit(EXIT_FAILURE);
+  }
+
+  status = getnameinfo(interface->ifa_netmask,
+		       sizeof(struct sockaddr_in),
+		       netmask,
+		       NI_MAXHOST,
+		       NULL,
+		       0,
+		       NI_NUMERICHOST // Numeric form of the hostname is returned
+		       );
+
+  // checks if getnameinfo worked
+  if (status != 0) {
+    perror("Error: getnameinfo(ifa_netmask, ...).\n");
     exit(EXIT_FAILURE);
   }
     
   printf("Interface's informations:\n");
   printf("\tInterface's name: %s\n", interface->ifa_name);
-  printf("\tInterface's IP address: %s\n", host);
+  printf("\tInterface's IP address: %s\n", address);
+  printf("\tInterface's netmask: %s\n", netmask);
 }
 
 // Returns first non lo interface or null ptr if error
