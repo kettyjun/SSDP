@@ -6,6 +6,7 @@
 #include <arpa/inet.h> // inet_addr
 #include <ifaddrs.h> // getifaddrs
 #include <unistd.h> // close
+#include <time.h> // time_t
 /* Libs for socket */
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -19,6 +20,9 @@ void print_network_interface(struct ifaddrs *);
 // Returns first non lo network interface
 const struct sockaddr *get_network_interfaces(void);
 
+// Returns M-SEARCH request
+const char *get_msearch_request(void);
+
 /*
   Compilation: gcc -g -O3 ssdp.c -o ssdp
   Documentation: https://en.wikipedia.org/wiki/Simple_Service_Discovery_Protocol
@@ -27,15 +31,19 @@ int main(void) {
   // Constants
   const uint16_t SSDP_PORT = 1900;
   const char *SSDP_IP_MULTICAST = "239.255.255.250";
+  const long int MAX_TIME = 10; // 10s
 
   // Variables
   int status = EXIT_FAILURE,
     udp_socket = 0,
     err = 0;
+  const char *request = NULL;
+  time_t start_t = 0, end_t = 0;
+  
   const struct sockaddr *src_sock = get_network_interfaces();
   struct sockaddr_in multicast_sock_in,
     src_sock_in,
-    *temporary_sock_in;
+    *temporary_sock_in = NULL;
   struct in_addr src_interface;
   struct ip_mreq multicast_group;
 
@@ -81,7 +89,7 @@ int main(void) {
   
   // Casts struct sockaddr * to struct sockaddr_in * then sets src_interface
   temporary_sock_in = (struct sockaddr_in *)src_sock;
-  src_interface = temporary_sock_in->sin_addr; // <- VALGRIND ERROR 
+  src_interface.s_addr = temporary_sock_in->sin_addr.s_addr; // <- VALGRIND ERROR
 
   // Sets socket's option IP_MULTICAST_IF (specifies default interface multicast datagrams sould be sent from)
   err = setsockopt(udp_socket, // manipulates socket udp_socket
@@ -129,7 +137,35 @@ int main(void) {
     close(udp_socket);
     exit(status);
   }
-		   
+
+  // Sends request to the multicast group
+  request = get_msearch_request();
+  err = sendto(udp_socket, // sending socket
+	       request, // ~ 'message'
+	       (strlen(request) + 1), // length of request
+	       0, // flag
+	       (struct sockaddr *)&multicast_sock_in, // destination
+	       sizeof(multicast_sock_in));
+
+  if (err == -1) {
+    perror("Error: sendto(socket).\n");
+    close(udp_socket);
+    exit(status);
+  }
+
+  // Prints request sent
+  printf("Request sent successfully!\n");
+
+  // Set the program on 'server mod', listen during MAX_TIME then continue
+  time(&start_t);
+  end_t = start_t + MAX_TIME;
+  printf("Start 'SERVER MOD' for %lus.\n", MAX_TIME);
+  printf("Waiting for answers...\n");
+  while (start_t < end_t) {
+    time(&start_t);
+  }
+  printf("Stop 'SERVER MOD'.\n");
+  
   // Closes UDP socket
   err = close(udp_socket);
 
@@ -235,4 +271,16 @@ const struct sockaddr *get_network_interfaces(void) {
 
   // Returns value in result_ptr
   return result_ptr;
+}
+
+// Returns M-SEARCH request
+const char *get_msearch_request(void) {
+  return "M-SEARCH * HTTP/1.1\r\n"
+         "Request Method: M-SEARCH\n"
+         "Request URI: *\n"
+         "Request Version: HTTP/1.1\n"
+         "HOST: 239.255.255.250:1900\r\n"
+         "MX: 10\r\n"
+         "MAN: \"ssdp:discover\"\r\n"  
+         "ST: ssdp:all\r\n";
 }
