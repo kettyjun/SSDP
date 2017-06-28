@@ -8,6 +8,7 @@
 #include <unistd.h> // close
 #include <time.h> // time_t
 #include <math.h> // pow()
+#include <stdbool.h> // bool
 /* Libs for socket */
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -24,6 +25,12 @@ struct ifaddrs *get_network_interface(void);
 // Returns the maximum number of possible interfaces with the given struct ifaddrs in parameter
 const uint32_t get_number_of_interfaces_in(const struct ifaddrs *);
 
+// Returns true if the two struct sockaddr_in given in parameter are equal
+bool sockaddr_in_equal(const struct sockaddr_in, const struct sockaddr_in);
+
+// Filter the struct sockaddr_in given parameter (i.e del replicate ...)
+int sockaddr_in_filter(struct sockaddr_in **, const int);
+
 // Returns M-SEARCH request
 const char *get_msearch_request(void);
 
@@ -35,8 +42,9 @@ int main(void) {
   // Constants
   const uint16_t SSDP_PORT = 1900;
   const char *SSDP_IP_MULTICAST = "239.255.255.250";
+  const char *CLEAN_CONSOLE = "\e[1;1H\e[2J";
   const long int MAX_TIME = 10; // 10 seconds
-  const long int MAX_SIZE = (1 << (11)); // 2048 bytes
+  const long int MAX_SIZE = (1 << (10)); // 1024 bytes
 
   // Variables
   int status = EXIT_FAILURE,
@@ -44,19 +52,21 @@ int main(void) {
     err = 0,
     counter = 0;
   const char *request = NULL;
-  char buffer[MAX_SIZE];
   time_t start_t = 0, end_t = 0;
 
   struct ifaddrs *interface = get_network_interface();
   const uint32_t max_interface = get_number_of_interfaces_in(interface);
+  char buffer[max_interface][MAX_SIZE];
   struct sockaddr *src_sock = interface->ifa_addr;
   struct sockaddr_in multicast_sock_in,
     src_sock_in,
     *temporary_sock_in = NULL,
-    responds_sock_in[max_interface];
+    *responds_sock_in = (struct sockaddr_in *)malloc(sizeof(struct sockaddr_in) * max_interface);
   struct in_addr src_interface;
   struct ip_mreq multicast_group;
   socklen_t size_sockaddr_in = sizeof(struct sockaddr_in);
+
+  //////////////////////////////////////////////////////////////////////
 
   // Creates UDP socket
   udp_socket = socket(AF_INET, // IPv4
@@ -100,7 +110,7 @@ int main(void) {
   
   // Casts struct sockaddr * to struct sockaddr_in * then sets src_interface
   temporary_sock_in = (struct sockaddr_in *)src_sock;
-  src_interface.s_addr = temporary_sock_in->sin_addr.s_addr; // <- VALGRIND ERROR
+  src_interface.s_addr = temporary_sock_in->sin_addr.s_addr;
 
   // Sets socket's option IP_MULTICAST_IF (specifies default interface multicast datagrams sould be sent from)
   err = setsockopt(udp_socket, // manipulates socket udp_socket
@@ -146,6 +156,9 @@ int main(void) {
   if (err == -1) {
     perror("Error: bind(socket).\n");
     close(udp_socket);
+    free(src_sock);
+    free(interface->ifa_netmask);
+    freeifaddrs(interface);
     exit(status);
   }
   
@@ -161,24 +174,28 @@ int main(void) {
   if (err == -1) {
     perror("Error: sendto(socket).\n");
     close(udp_socket);
+    free(src_sock);
+    free(interface->ifa_netmask);
+    freeifaddrs(interface);
     exit(status);
   }
 
   // Prints request sent
-  printf("Request sent successfully!\n");
+  printf("Request sent successfully!\n\n");
 
   // Set the program on 'server mod', waits for answers during MAX_TIME seconds then continue
   time(&start_t);
   end_t = start_t + MAX_TIME;
   
   printf("Start 'SERVER MOD' for %lus.\n", MAX_TIME);
+  printf("Number maximum of answers: %d.\n", max_interface);
   printf("Waiting for answers...\n");
   /*
     / ! \ combo recvfrom + time, not accurate enough
   */
-  while (start_t < end_t) {
+  while ((start_t < end_t) && (counter < max_interface)) {
     err = recvfrom(udp_socket,
-		   buffer,
+		   buffer[counter],
 		   MAX_SIZE,
 		   0,
 		   (struct sockaddr *)&responds_sock_in[counter],
@@ -189,20 +206,43 @@ int main(void) {
       close(udp_socket);
       exit(status);
     } else {
-      printf("Received %d answer(s).\n", (counter + 1));
-      printf("Buffer: %s\n", buffer);
-      memset(&buffer, 0x0, MAX_SIZE);
+      printf("Received 1 answer from %s.\n", inet_ntoa(responds_sock_in[counter].sin_addr));
+      memset(&buffer[counter], 0x0, MAX_SIZE);
       counter++;
     }
     time(&start_t);
   }
   printf("Stop 'SERVER MOD'.\n");
+  printf("%d/%d answer(s) received!\n", counter, max_interface);
+
+  //wait 1s before cleaning sdtout
+  sleep(1);
+  err = write(STDOUT_FILENO, CLEAN_CONSOLE, (strlen(CLEAN_CONSOLE) + 1));
+
+  if (err == -1) {
+    perror("Error: write(..., CLEAN_CONSOLE, ...).\n");
+    close(udp_socket);
+    free(src_sock);
+    free(interface->ifa_netmask);
+    freeifaddrs(interface);
+    free(responds_sock_in);
+    exit(status);
+    }
+
+  // Filters the list responds_sock_in and returns the new size 
+  counter = sockaddr_in_filter(&responds_sock_in, counter);
+  printf("Found %d different(s) adress:\n", counter);
+  for(int i = 0; i < counter; i++) printf("\t%s\n",inet_ntoa(responds_sock_in[i].sin_addr));
   
   // Closes UDP socket
   err = close(udp_socket);
 
   if (err == -1) {
     perror("Error: close(socket).\n");
+    free(src_sock);
+    free(interface->ifa_netmask);
+    freeifaddrs(interface);
+    free(responds_sock_in);
     exit(status);
   }
 
@@ -210,6 +250,7 @@ int main(void) {
   free(src_sock);
   free(interface->ifa_netmask);
   freeifaddrs(interface);
+  free(responds_sock_in);
   
   // End
   status = EXIT_SUCCESS;
@@ -347,7 +388,8 @@ const uint32_t get_number_of_interfaces_in(const struct ifaddrs *interface) {
     perror("Error: inet_aton(...) in get_number_of_interfaces.\n");
     exit(status);
   }
-  
+
+  // count how many bit at '1' there is in netmask_t
   netmask_t = in_netmask.s_addr;
   netmask_t = netmask_t - ((netmask_t >> 1) & 0x55555555);
   netmask_t = (netmask_t & 0x33333333) + ((netmask_t >> 2) & 0x33333333);
@@ -356,14 +398,65 @@ const uint32_t get_number_of_interfaces_in(const struct ifaddrs *interface) {
   return (uint32_t)(pow((double)bit, (double)(max_bits - netmask_t)) - 2);
 }
 
+// Returns true if the two struct sockaddr_in given in parameter are equal
+bool sockaddr_in_equal(const struct sockaddr_in sock_addr1, const struct sockaddr_in sock_addr2) {
+  if (sock_addr1.sin_family != sock_addr2.sin_family) return false;
+
+  if (sock_addr1.sin_addr.s_addr != sock_addr2.sin_addr.s_addr) return false;
+
+  const char *ip_addr1 = inet_ntoa(sock_addr1.sin_addr);
+  const char *ip_addr2 = inet_ntoa(sock_addr2.sin_addr);
+  
+  if (strcmp(ip_addr1, ip_addr2) != 0) return false;
+  
+  return true;
+}
+
+// Filter the struct sockaddr_in given parameter (i.e del replicate ...)
+int sockaddr_in_filter(struct sockaddr_in **list, const int max_size) {
+  struct sockaddr_in history[max_size];
+  int index = 0,
+    status = EXIT_FAILURE,
+    history_index = 1;
+  bool exist = false;
+  
+  if (max_size == 0) {
+    perror("Error: filter null list!\n");
+    free(list);
+    exit(status);
+  }
+  history[0] = *list[0];
+  /*
+    TODO ...
+  for (int x = 1; x < max_size; x++) {
+    exist = false;
+    for (int c = 0; c < history_index && !exist; c++) {
+      if (sockaddr_in_equal(history[c], *list[x])) {
+	exist = true;
+      }
+    }
+    if (!exist) {
+      history[history_index] = *list[x];
+      history_index++;
+    }
+  }
+  */
+  list = NULL;
+  list = (struct sockaddr_in **)malloc(sizeof(struct sockaddr_in *) * history_index);
+  printf("OK");
+  for (int c = 0; c < history_index; c++) {
+    list[c] = (struct sockaddr_in *)malloc(sizeof(struct sockaddr_in));
+    list[c] = &history[c];
+  }
+
+  return history_index;
+}
+
 // Returns M-SEARCH request
 const char *get_msearch_request(void) {
   return "M-SEARCH * HTTP/1.1\r\n"
-    /*"Request Method: M-SEARCH\n"
-      "Request URI: *\n"
-      "Request Version: HTTP/1.1\n"*/
     "HOST: 239.255.255.250:1900\r\n"
-    "MAN: \"ssdp:discover\"\r\n"
-    "MX: 10\r\n"
-    "ST: ssdp:all\r\n";
+    "MAN: \"ssdp:discover\"\r\n" 
+    "MX: 2\r\n" // second to delay response
+    "ST: ssdp:all\r\n\r\n"; // Search Target
 }
