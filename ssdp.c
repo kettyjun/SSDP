@@ -7,6 +7,7 @@
 #include <ifaddrs.h> // getifaddrs
 #include <unistd.h> // close
 #include <time.h> // time_t
+#include <math.h> // pow()
 /* Libs for socket */
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -18,34 +19,44 @@
 void print_network_interface(struct ifaddrs *);
 
 // Returns first non lo network interface
-const struct sockaddr *get_network_interfaces(void);
+struct ifaddrs *get_network_interface(void);
+
+// Returns the maximum number of possible interfaces with the given struct ifaddrs in parameter
+const uint32_t get_number_of_interfaces_in(const struct ifaddrs *);
 
 // Returns M-SEARCH request
 const char *get_msearch_request(void);
 
 /*
-  Compilation: gcc -g -O3 ssdp.c -o ssdp
+  Compilation: gcc -g -O3 ssdp.c -o ssdp -lm
   Documentation: https://en.wikipedia.org/wiki/Simple_Service_Discovery_Protocol
 */
 int main(void) {
   // Constants
   const uint16_t SSDP_PORT = 1900;
   const char *SSDP_IP_MULTICAST = "239.255.255.250";
-  const long int MAX_TIME = 10; // 10s
+  const long int MAX_TIME = 10; // 10 seconds
+  const long int MAX_SIZE = (1 << (11)); // 2048 bytes
 
   // Variables
   int status = EXIT_FAILURE,
     udp_socket = 0,
-    err = 0;
+    err = 0,
+    counter = 0;
   const char *request = NULL;
+  char buffer[MAX_SIZE];
   time_t start_t = 0, end_t = 0;
-  
-  const struct sockaddr *src_sock = get_network_interfaces();
+
+  struct ifaddrs *interface = get_network_interface();
+  const uint32_t max_interface = get_number_of_interfaces_in(interface);
+  struct sockaddr *src_sock = interface->ifa_addr;
   struct sockaddr_in multicast_sock_in,
     src_sock_in,
-    *temporary_sock_in = NULL;
+    *temporary_sock_in = NULL,
+    responds_sock_in[max_interface];
   struct in_addr src_interface;
   struct ip_mreq multicast_group;
+  socklen_t size_sockaddr_in = sizeof(struct sockaddr_in);
 
   // Creates UDP socket
   udp_socket = socket(AF_INET, // IPv4
@@ -115,7 +126,7 @@ int main(void) {
 		   &multicast_group, // set option value
 		   sizeof(multicast_group)); // sizeof option value
 
-    if (err == -1) {
+  if (err == -1) {
     perror("Error: setsockopt(..., IP_ADD_MEMBERSHIP, ...).\n");
     close(udp_socket);
     exit(status);
@@ -137,7 +148,7 @@ int main(void) {
     close(udp_socket);
     exit(status);
   }
-
+  
   // Sends request to the multicast group
   request = get_msearch_request();
   err = sendto(udp_socket, // sending socket
@@ -156,12 +167,33 @@ int main(void) {
   // Prints request sent
   printf("Request sent successfully!\n");
 
-  // Set the program on 'server mod', listen during MAX_TIME then continue
+  // Set the program on 'server mod', waits for answers during MAX_TIME seconds then continue
   time(&start_t);
   end_t = start_t + MAX_TIME;
+  
   printf("Start 'SERVER MOD' for %lus.\n", MAX_TIME);
   printf("Waiting for answers...\n");
+  /*
+    / ! \ combo recvfrom + time, not accurate enough
+  */
   while (start_t < end_t) {
+    err = recvfrom(udp_socket,
+		   buffer,
+		   MAX_SIZE,
+		   0,
+		   (struct sockaddr *)&responds_sock_in[counter],
+		   &size_sockaddr_in);
+
+    if (err == -1) {
+      perror("Error: recvfrom(socket).\n");
+      close(udp_socket);
+      exit(status);
+    } else {
+      printf("Received %d answer(s).\n", (counter + 1));
+      printf("Buffer: %s\n", buffer);
+      memset(&buffer, 0x0, MAX_SIZE);
+      counter++;
+    }
     time(&start_t);
   }
   printf("Stop 'SERVER MOD'.\n");
@@ -173,6 +205,11 @@ int main(void) {
     perror("Error: close(socket).\n");
     exit(status);
   }
+
+  // Free(s)
+  free(src_sock);
+  free(interface->ifa_netmask);
+  freeifaddrs(interface);
   
   // End
   status = EXIT_SUCCESS;
@@ -225,13 +262,13 @@ void print_network_interface(struct ifaddrs *interface) {
 }
 
 // Returns first non lo network interface or null ptr if error
-const struct sockaddr *get_network_interfaces(void) {
+struct ifaddrs *get_network_interface(void) {
   // Constants
   const char *LO = "lo";
   
   // Variables
   struct ifaddrs *interface_addrs = NULL, *iterate_ptr = NULL;
-  struct sockaddr *result_ptr = NULL;
+  struct ifaddrs *result_ptr = NULL;
   int status = 0;
 
   status = getifaddrs(&interface_addrs);
@@ -252,16 +289,19 @@ const struct sockaddr *get_network_interfaces(void) {
 
       // Prints interface's informations
       print_network_interface(iterate_ptr);
-
+      
       // Sets resul_ptr
-      result_ptr = iterate_ptr->ifa_addr;
+      result_ptr = (struct ifaddrs *)malloc(sizeof(struct ifaddrs));
+      result_ptr->ifa_addr = (struct sockaddr *)malloc(sizeof(struct sockaddr));
+      result_ptr->ifa_netmask = (struct sockaddr *)malloc(sizeof(struct sockaddr));
+      
+      memcpy(result_ptr->ifa_addr, iterate_ptr->ifa_addr, sizeof(struct sockaddr));
+      memcpy(result_ptr->ifa_netmask, iterate_ptr->ifa_netmask, sizeof(struct sockaddr));
+      result_ptr->ifa_next = NULL;
       break;
     }
     iterate_ptr = iterate_ptr->ifa_next;
   }
-  
-  // Free interfaces_addrs
-  freeifaddrs(interface_addrs);
 
   // Checks if result_ptr is empty if so then error
   if (result_ptr == NULL) {
@@ -269,18 +309,61 @@ const struct sockaddr *get_network_interfaces(void) {
     exit(EXIT_FAILURE);
   }
 
+  // Free
+  freeifaddrs(interface_addrs);
+  
   // Returns value in result_ptr
   return result_ptr;
+}
+
+// Returns the maximum number of possible interfaces with the given struct ifaddrs in parameter
+const uint32_t get_number_of_interfaces_in(const struct ifaddrs *interface) {
+  // Variables and constants
+  int status = 0;
+  char netmask[NI_MAXHOST];
+  struct in_addr in_netmask;
+  const char *full = "255.255.255.255";
+  const uint32_t max_bits = 32, // 32 bits -> IPv4
+    bit = 2; // 2 possibilities: 0 or 1
+  uint32_t netmask_t = 0;
+
+  status = getnameinfo(interface->ifa_netmask,
+		       sizeof(struct sockaddr_in),
+		       netmask,
+		       NI_MAXHOST,
+		       NULL,
+		       0,
+		       NI_NUMERICHOST // Numeric form of the hostname is returned
+		       );
+
+  if (status == -1) {
+    perror("Error: getnameinfo(...) in get_number_of_interfaces.\n");
+    exit(status);
+  }
+
+  status = inet_aton(netmask, &in_netmask);
+
+  if (status == -1) {
+    perror("Error: inet_aton(...) in get_number_of_interfaces.\n");
+    exit(status);
+  }
+  
+  netmask_t = in_netmask.s_addr;
+  netmask_t = netmask_t - ((netmask_t >> 1) & 0x55555555);
+  netmask_t = (netmask_t & 0x33333333) + ((netmask_t >> 2) & 0x33333333);
+  netmask_t = (((netmask_t + (netmask_t >> 4)) & 0x0F0F0F0F) * 0x01010101) >> 24;
+  
+  return (uint32_t)(pow((double)bit, (double)(max_bits - netmask_t)) - 2);
 }
 
 // Returns M-SEARCH request
 const char *get_msearch_request(void) {
   return "M-SEARCH * HTTP/1.1\r\n"
-         "Request Method: M-SEARCH\n"
-         "Request URI: *\n"
-         "Request Version: HTTP/1.1\n"
-         "HOST: 239.255.255.250:1900\r\n"
-         "MX: 10\r\n"
-         "MAN: \"ssdp:discover\"\r\n"  
-         "ST: ssdp:all\r\n";
+    /*"Request Method: M-SEARCH\n"
+      "Request URI: *\n"
+      "Request Version: HTTP/1.1\n"*/
+    "HOST: 239.255.255.250:1900\r\n"
+    "MAN: \"ssdp:discover\"\r\n"
+    "MX: 10\r\n"
+    "ST: ssdp:all\r\n";
 }
