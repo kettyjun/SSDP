@@ -28,9 +28,6 @@ const uint32_t get_number_of_interfaces_in(const struct ifaddrs *);
 // Returns true if the two struct sockaddr_in given in parameter are equal
 bool sockaddr_in_equal(const struct sockaddr_in, const struct sockaddr_in);
 
-// Returns true if the struct sockaddr_in and struct in_addr given in parameter are equal
-bool in_addr_equal(const struct in_addr, const struct in_addr);
-
 // Filter the struct sockaddr_in given parameter (i.e del replicate, remove src addr ...)
 int sockaddr_in_filter(struct sockaddr_in **, const int, const struct in_addr *);
 
@@ -415,22 +412,6 @@ bool sockaddr_in_equal(const struct sockaddr_in sock_addr1, const struct sockadd
   
   if (strcmp(ip_addr1, ip_addr2) != 0) return false;
   
-  return true;
-}
-
-// Returns true if the struct sockaddr_in and struct in_addr given in parameter are equal
-bool in_addr_equal(const struct in_addr in_addr1, const struct in_addr in_addr2) {
-
-  const char *ip_addr1 = inet_ntoa(in_addr1);
-  const char *ip_addr2 = inet_ntoa(in_addr2);
-  printf("in_addr_equal1 from %s.\n", ip_addr1);
-  printf("in_addr_equal2 from %s.\n", ip_addr2);
-  int v = strcmp(ip_addr1, ip_addr2);
-  printf("strcmp: %d\n", v);
-  if (v != 0) {
-    return false;
-  }
-
   return true;
 }
 
