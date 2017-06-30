@@ -28,8 +28,11 @@ const uint32_t get_number_of_interfaces_in(const struct ifaddrs *);
 // Returns true if the two struct sockaddr_in given in parameter are equal
 bool sockaddr_in_equal(const struct sockaddr_in, const struct sockaddr_in);
 
-// Filter the struct sockaddr_in given parameter (i.e del replicate ...)
-int sockaddr_in_filter(struct sockaddr_in **, const int);
+// Returns true if the struct sockaddr_in and struct in_addr given in parameter are equal
+bool in_addr_equal(const struct in_addr, const struct in_addr);
+
+// Filter the struct sockaddr_in given parameter (i.e del replicate, remove src addr ...)
+int sockaddr_in_filter(struct sockaddr_in **, const int, const struct in_addr *);
 
 // Returns M-SEARCH request
 const char *get_msearch_request(void);
@@ -181,7 +184,7 @@ int main(void) {
   }
 
   // Prints request sent
-  printf("Request sent successfully!\n\n");
+  printf("SSDP request sent successfully!\n\n");
 
   // Set the program on 'server mod', waits for answers during MAX_TIME seconds then continue
   time(&start_t);
@@ -190,6 +193,7 @@ int main(void) {
   printf("Start 'SERVER MOD' for %lus.\n", MAX_TIME);
   printf("Number maximum of answers: %d.\n", max_interface);
   printf("Waiting for answers...\n");
+
   /*
     / ! \ combo recvfrom + time, not accurate enough
   */
@@ -200,7 +204,7 @@ int main(void) {
 		   0,
 		   (struct sockaddr *)&responds_sock_in[counter],
 		   &size_sockaddr_in);
-
+    
     if (err == -1) {
       perror("Error: recvfrom(socket).\n");
       close(udp_socket);
@@ -230,9 +234,11 @@ int main(void) {
   }
 
   // Filters the list responds_sock_in and returns the new size
-  counter = sockaddr_in_filter(&responds_sock_in, counter);
+  counter = sockaddr_in_filter(&responds_sock_in, counter, &src_interface);
+
+  // Displays address
   printf("Found %d different(s) adress:\n", counter);
-  for(int i = 0; i < counter; i++) printf("2\t%s\n",inet_ntoa(responds_sock_in[i].sin_addr));
+  for(int i = 0; i < counter; i++) printf("\t%s\n",inet_ntoa(responds_sock_in[i].sin_addr));
   
   // Closes UDP socket
   err = close(udp_socket);
@@ -412,13 +418,30 @@ bool sockaddr_in_equal(const struct sockaddr_in sock_addr1, const struct sockadd
   return true;
 }
 
+// Returns true if the struct sockaddr_in and struct in_addr given in parameter are equal
+bool in_addr_equal(const struct in_addr in_addr1, const struct in_addr in_addr2) {
+
+  const char *ip_addr1 = inet_ntoa(in_addr1);
+  const char *ip_addr2 = inet_ntoa(in_addr2);
+  printf("in_addr_equal1 from %s.\n", ip_addr1);
+  printf("in_addr_equal2 from %s.\n", ip_addr2);
+  int v = strcmp(ip_addr1, ip_addr2);
+  printf("strcmp: %d\n", v);
+  if (v != 0) {
+    return false;
+  }
+
+  return true;
+}
+
 // Filter the struct sockaddr_in given parameter (i.e del replicate ...)
-int sockaddr_in_filter(struct sockaddr_in **list, const int max_size) {
+int sockaddr_in_filter(struct sockaddr_in **list, const int max_size, const struct in_addr * except) {
   struct sockaddr_in *history = (struct sockaddr_in *)malloc(sizeof(struct sockaddr_in) *max_size),
     **temp = NULL;
   int index = 0,
     status = EXIT_FAILURE,
     history_index = 1;
+  const char *src_ip = inet_ntoa(*except);
   bool exist = false;
   
   if (max_size == 0 || list == NULL) {
@@ -432,7 +455,8 @@ int sockaddr_in_filter(struct sockaddr_in **list, const int max_size) {
   for (int x = 1; x < max_size; x++) {
     exist = false;
     for (int c = 0; c < history_index && !exist; c++) {
-      if (sockaddr_in_equal(history[c], (*list)[x])) {
+      if (sockaddr_in_equal(history[c], (*list)[x]) ||
+	  strcmp(src_ip, inet_ntoa((*list)[x].sin_addr)) == 0) {
 	exist = true;
       }
     }
