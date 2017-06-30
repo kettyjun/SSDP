@@ -227,12 +227,12 @@ int main(void) {
     freeifaddrs(interface);
     free(responds_sock_in);
     exit(status);
-    }
+  }
 
-  // Filters the list responds_sock_in and returns the new size 
+  // Filters the list responds_sock_in and returns the new size
   counter = sockaddr_in_filter(&responds_sock_in, counter);
   printf("Found %d different(s) adress:\n", counter);
-  for(int i = 0; i < counter; i++) printf("\t%s\n",inet_ntoa(responds_sock_in[i].sin_addr));
+  for(int i = 0; i < counter; i++) printf("2\t%s\n",inet_ntoa(responds_sock_in[i].sin_addr));
   
   // Closes UDP socket
   err = close(udp_socket);
@@ -414,40 +414,40 @@ bool sockaddr_in_equal(const struct sockaddr_in sock_addr1, const struct sockadd
 
 // Filter the struct sockaddr_in given parameter (i.e del replicate ...)
 int sockaddr_in_filter(struct sockaddr_in **list, const int max_size) {
-  struct sockaddr_in history[max_size];
+  struct sockaddr_in *history = (struct sockaddr_in *)malloc(sizeof(struct sockaddr_in) *max_size),
+    **temp = NULL;
   int index = 0,
     status = EXIT_FAILURE,
     history_index = 1;
   bool exist = false;
   
-  if (max_size == 0) {
+  if (max_size == 0 || list == NULL) {
     perror("Error: filter null list!\n");
     free(list);
     exit(status);
   }
-  history[0] = *list[0];
-  /*
-    TODO ...
+  
+  history[0] = (*list)[0];
+  
   for (int x = 1; x < max_size; x++) {
     exist = false;
     for (int c = 0; c < history_index && !exist; c++) {
-      if (sockaddr_in_equal(history[c], *list[x])) {
+      if (sockaddr_in_equal(history[c], (*list)[x])) {
 	exist = true;
       }
     }
     if (!exist) {
-      history[history_index] = *list[x];
+      history[history_index] = (*list)[x];
       history_index++;
     }
   }
-  */
-  list = NULL;
-  list = (struct sockaddr_in **)malloc(sizeof(struct sockaddr_in *) * history_index);
-  printf("OK");
-  for (int c = 0; c < history_index; c++) {
-    list[c] = (struct sockaddr_in *)malloc(sizeof(struct sockaddr_in));
-    list[c] = &history[c];
-  }
+
+  free(*list);
+  *list = malloc(sizeof(struct sockaddr_in) * history_index);
+  
+  for (int x = 0; x < history_index; x++) (*list)[x] = history[x];
+  
+  free(history);
 
   return history_index;
 }
